@@ -11,12 +11,14 @@ class GaussianParticle(nn.Module):
             self,
             loc=torch.zeros(2),
             scale_tril=torch.eye(2),
-            requires_grad=True
+            trainable=True
         ):
         super().__init__()
-        self.loc = nn.parameter.Parameter(loc, requires_grad=requires_grad)
-        self.scale_tril = nn.parameter.Parameter(scale_tril, requires_grad=requires_grad)
-        self._lmbda = nn.parameter.Parameter(torch.tensor(0.), requires_grad=requires_grad)
+        self.dim = len(loc)
+        self.trainable = trainable
+        self.loc = nn.parameter.Parameter(loc, requires_grad=self.trainable)
+        self.scale_tril = nn.parameter.Parameter(scale_tril, requires_grad=self.trainable)
+        self._lmbda = nn.parameter.Parameter(torch.tensor(0.), requires_grad=self.trainable)
         
         self.mvn = MultivariateNormal(loc=self.loc, scale_tril=self.scale_tril)
 
@@ -28,6 +30,12 @@ class GaussianParticle(nn.Module):
         return self.mvn.log_prob(X)
 
     def sample(self, size=[1000]):
+        if self.trainable:
+            # Reparametrization trick:
+            std_normal = torch.distributions.MultivariateNormal(loc=torch.zeros(self.dim), scale_tril=torch.eye(self.dim))
+            samples = std_normal.sample(size)
+            samples = self.loc + samples @ self.scale_tril.T
+            return samples
         return self.mvn.sample(size)
 
 
@@ -59,6 +67,11 @@ class GaussianMixture(nn.Module):
         for i in range(len(bincount)):
             samples.append(self.particles[i].sample(size=[bincount[i]]))
         return torch.cat(samples)
+
+
+def RKL(q, p, n_samples=1000):
+    samples = q.sample([n_samples])
+    return torch.mean(q.log_prob(samples) - p.log_prob(samples))
 
 
 def FKL(p, q, f, nsamples=1000):
@@ -94,5 +107,5 @@ def plot_distribs(dict, nsamples=1000):
         hue=hue,
         kind='kde',
         palette=sns.color_palette("hls", len(dict)),
-        height=3.5
+        height=3
     )
