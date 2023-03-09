@@ -1,41 +1,98 @@
+import torch
+from torch import nn
+from torch.distributions import MultivariateNormal
+
 import numpy as np
 import seaborn as sns
 
-# def plot_distribs(lst, lst_colors):
-#     delta = 0.1
-#     delta_x = 2
-#     delta_y = 2
-#     for i in range(d):
-#         d = lst[i]
-#         c = lst_colors[i]
-#         mu = d.loc.detach().numpy()
-#         x = np.arange(mu[0]-delta_x, mu[0]+delta_x, delta)
-#         y = np.arange(mu[1]-delta_y, mu[1]+delta_y, delta)
-#         X, Y = np.meshgrid(x, y)
-#         pos = np.empty(X.shape + (2,))
-#         pos[:, :, 0] = X; pos[:, :, 1] = Y
-#         pos = torch.tensor(pos)
-#         Z = torch.exp(d.log_prob(pos)).detach().numpy()
-#         plt.contour(X, Y, Z, levels=2, colors=c)
-#     plt.show()
 
-def plot_distribs(lst, nsamples=1000):
-    d = len(lst)
-    x = np.zeros(d*nsamples)
-    y = np.zeros(d*nsamples)
-    hue = np.zeros(d*nsamples)
+class GaussianParticle(nn.Module):    
+    def __init__(
+            self,
+            loc=torch.zeros(2),
+            scale_tril=torch.eye(2),
+            requires_grad=True
+        ):
+        super().__init__()
+        self.loc = nn.parameter.Parameter(loc, requires_grad=requires_grad)
+        self.scale_tril = nn.parameter.Parameter(scale_tril, requires_grad=requires_grad)
+        self._lmbda = nn.parameter.Parameter(torch.tensor(0.), requires_grad=requires_grad)
+        
+        self.mvn = MultivariateNormal(loc=self.loc, scale_tril=self.scale_tril)
 
-    for i in range(d):
-        distr = lst[i]
+    def lmbda(self):
+        # Trick to implement the [0,1] constraint on lambda:
+        return torch.sigmoid(self._lmbda)
+
+    def log_prob(self, X):
+        return self.mvn.log_prob(X)
+
+    def sample(self, size=[1000]):
+        return self.mvn.sample(size)
+
+
+class GaussianMixture(nn.Module):
+    def __init__(self, init):
+        super().__init__()
+        self.weights = torch.tensor([1])
+        self.particles = [init]
+
+    def add_particle(self, particle):
+        # updating weights list:
+        self.weights = self.weights*(1-particle.lmbda())
+        self.weights = torch.cat([self.weights, torch.tensor([particle.lmbda()])])
+        # updating particles list:
+        self.particles.append(particle)
+
+    def log_prob(self, X):
+        # log_prob to be coherent with PyTorch distributions API
+        prob = torch.zeros(len(X))
+        for i in range(len(self.particles)):
+            prob += self.weights[i]*torch.exp(self.particles[i].log_prob(X))
+        return torch.log(prob)
+
+    def sample(self, size=[1000]):
+        samples = []
+        # sampling in a hierarchical model:
+        indexes = np.random.choice(len(self.particles), size=size[0], p=self.weights.detach().numpy())
+        bincount = np.bincount(indexes)
+        for i in range(len(bincount)):
+            samples.append(self.particles[i].sample(size=[bincount[i]]))
+        return torch.cat(samples)
+
+
+def FKL(p, q, f, nsamples=1000):
+    samples = q.sample([nsamples])
+
+    ps = p.log_prob(samples)
+    qs = q.log_prob(samples)
+    fs = f.log_prob(samples)
+
+    l = f.lmbda()
+
+    r = torch.exp(ps-qs)
+    w = r / r.sum()
+
+    return torch.dot(w, ps - torch.log(l*torch.exp(fs) + (1-l)*torch.exp(qs)))
+
+def plot_distribs(dict, nsamples=1000):
+    x, y, hue = [], [], []
+    for key in dict.keys():
+        distr = dict[key]
         samples = distr.sample([nsamples]).detach().numpy().squeeze()
-        x[nsamples*i:nsamples*i+nsamples] = samples[:,0]
-        y[nsamples*i:nsamples*i+nsamples] = samples[:,1]
-        hue[nsamples*i:nsamples*i+nsamples] = np.ones(nsamples)*(i+1)
+        x.append(samples[:,0])
+        y.append(samples[:,1])
+        hue.append(nsamples*[key])
+    x = np.concatenate(x)
+    y = np.concatenate(y)
+    hue = np.concatenate(hue)
 
+    sns.set_style('white')
     sns.displot(
         x=x,
         y=y,
         hue=hue,
         kind='kde',
-        palette=sns.color_palette("hls", d)
+        palette=sns.color_palette("hls", len(dict)),
+        height=3.5
     )
