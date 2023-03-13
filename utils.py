@@ -30,13 +30,13 @@ class GaussianParticle(nn.Module):
         return self.mvn.log_prob(X)
 
     def sample(self, size=[1000]):
-        if self.trainable:
-            # Reparametrization trick:
-            std_normal = torch.distributions.MultivariateNormal(loc=torch.zeros(self.dim), scale_tril=torch.eye(self.dim))
-            samples = std_normal.sample(size)
-            samples = self.loc + samples @ self.scale_tril.T
-            return samples
-        return self.mvn.sample(size)
+        # if self.trainable:
+        #     # Reparametrization trick:
+        #     std_normal = MultivariateNormal(loc=torch.zeros(self.dim), scale_tril=torch.eye(self.dim))
+        #     samples = std_normal.sample(size)
+        #     samples = self.loc + samples @ self.scale_tril.T
+        #     return samples
+        return self.mvn.rsample(size)
 
 
 class GaussianMixture(nn.Module):
@@ -73,6 +73,16 @@ def RKL(q, p, n_samples=1000):
     samples = q.sample([n_samples])
     return torch.mean(q.log_prob(samples) - p.log_prob(samples))
 
+def varFKL(p, q, nsamples=1000):
+    samples = q.sample([nsamples])
+
+    ps = p.log_prob(samples)
+    qs = q.log_prob(samples)
+
+    r = torch.exp(ps-qs)
+    w = r / r.sum()
+
+    return torch.dot(w, ps - qs)
 
 def FKL(p, q, f, nsamples=1000):
     samples = q.sample([nsamples])
