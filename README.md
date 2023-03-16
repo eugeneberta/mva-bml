@@ -12,4 +12,8 @@ Available at: https://arxiv.org/abs/2106.15980v1
 
 ## Running the code
 
+You can install the dependencies using:
 
+conda create -n <environment-name>
+conda activate <environment-name>
+pip3 install -r requirements.txt
